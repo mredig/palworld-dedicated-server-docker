@@ -1,0 +1,2 @@
+/pal/Package/Pal/Saved/SaveGames/
+/pal/Package/Pal/Saved/Config/LinuxServer/

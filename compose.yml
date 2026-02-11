@@ -1,20 +1,107 @@
 services:
+  restic-restore:
+    image: restic/restic
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        # Check if RESTIC_REPOSITORY is set and repository exists
+        if [ -n "$RESTIC_REPOSITORY" ]; then
+          if [ -f /pal/Package/Pal/Saved/skip ]; then
+            echo "Skip file detected. Skipping restore."
+            exit 0
+          fi
+
+          echo "Attempting to restore from Restic repository..."
+
+          # Authenticate and list snapshots to verify repo access
+          restic snapshots || {
+            echo "Failed to access Restic repository. Skipping restore."
+            exit 0
+          }
+
+          # Restore the latest snapshot to the volume
+          restic restore latest --target / --path /pal/Package/Pal/Saved
+
+          echo "Restic restore complete"
+        else
+          echo "No Restic repository specified. Skipping restore."
+        fi
+    environment:
+      - RESTIC_REPOSITORY=${RESTIC_REPOSITORY:-}
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD:-}
+    volumes:
+      - ./Saved:/pal/Package/Pal/Saved
+    restart: "no"
+
+
   palworld-server:
     # https://github.com/pocketpairjp/palworld-dedicated-server-docker/pkgs/container/palserver
     image: ghcr.io/pocketpairjp/palserver:v0.7.1.86065
-
     entrypoint: /pal/helper.sh
-
     # https://tech.palworldgame.com/settings-and-operation/arguments
     command:
       - -port=8211
       - -useperfthreads
       - -NoAsyncLoadingThread
       - -UseMultithreadForDS
-
     ports:
       - "8211:8211/udp"
-
+    depends_on:
+      restic-restore:
+        condition: service_completed_successfully
     volumes:
       - ./helper.sh:/pal/helper.sh:ro
       - ./Saved:/pal/Package/Pal/Saved
+
+  restic-backup:
+    image: restic/restic
+    profiles: ["manual"]
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        # List of files/directories to backup
+        BACKUP_PATHS=${BACKUP_PATHS:-/pal/Package/Pal/Saved}
+
+        # Check if repository details are provided
+        if [ -n "$RESTIC_REPOSITORY" ]; then
+          if [ -f /pal/Package/Pal/Saved/skip ]; then
+            echo "Skip file detected. Skipping backup."
+            exit 0
+          fi
+
+          echo "Preparing to backup: $BACKUP_PATHS"
+
+          # Initialize repository if it doesn't exist
+          restic init || true
+
+          # Create a backup with a descriptive tag
+          restic backup \
+            --files-from /root/backup-list.txt \
+            --tag palworld-server \
+            --tag timestamp="$(date +%Y%m%d_%H%M%S)" \
+            $BACKUP_PATHS
+
+          # Optional: Prune old backups to manage repository size
+          if [ -n "$BACKUP_KEEP_LAST" ]; then
+            restic forget \
+              --keep-last $BACKUP_KEEP_LAST \
+              --prune
+          fi
+
+          echo "Backup completed successfully"
+        else
+          echo "No Restic repository specified. Skipping backup."
+          exit 1
+        fi
+    environment:
+      - RESTIC_REPOSITORY=${RESTIC_REPOSITORY:-}
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD:-}
+      # Optional: customize backup paths
+      # Optional: number of latest backups to keep
+      - BACKUP_KEEP_LAST=${BACKUP_KEEP_LAST:-5}
+    volumes:
+      - ./Saved:/pal/Package/Pal/Saved:ro
+      - ./backup-list.txt:/root/backup-list.txt
+    restart: "no"
