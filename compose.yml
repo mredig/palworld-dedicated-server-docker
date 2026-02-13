@@ -21,7 +21,10 @@ services:
           }
 
           # Restore the latest snapshot to the volume
-          restic restore latest --target / --path /pal/Package/Pal/Saved
+          restic restore latest \
+            --path /pal/Package/Pal/Saved/Config/LinuxServer \
+            --path /pal/Package/Pal/Saved/SaveGames \
+            --target /
 
           echo "Restic restore complete"
         else
